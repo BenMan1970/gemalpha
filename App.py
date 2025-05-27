@@ -61,14 +61,31 @@ def smoothed_heiken_ashi_pine(dfo,l1=10,l2=10):
     eo=ema(dfo['Open'],l1);eh=ema(dfo['High'],l1);el=ema(dfo['Low'],l1);ec=ema(dfo['Close'],l1)
     hai=pd.DataFrame({'Open':eo,'High':eh,'Low':el,'Close':ec},index=dfo.index)
     hao_i,hac_i=heiken_ashi_pine(hai);sho=ema(hao_i,l2);shc=ema(hac_i,l2);return sho,shc
+
+# --- Fonction ichimoku_pine_signal (CORRIGÉE pour la syntaxe if/elif) ---
 def ichimoku_pine_signal(df_high, df_low, df_close, tenkan_p=9, kijun_p=26, senkou_b_p=52):
-    min_len_req=max(tenkan_p,kijun_p,senkou_b_p)
-    if len(df_high)<min_len_req or len(df_low)<min_len_req or len(df_close)<min_len_req:print(f"Ichi:Data<({len(df_close)}) vs req {min_len_req}.");return 0
-    ts=(df_high.rolling(window=tenkan_p).max()+df_low.rolling(window=tenkan_p).min())/2;ks=(df_high.rolling(window=kijun_p).max()+df_low.rolling(window=kijun_p).min())/2
-    sa=(ts+ks)/2;sb=(df_high.rolling(window=senkou_b_p).max()+df_low.rolling(window=senkou_b_p).min())/2
-    if pd.isna(df_close.iloc[-1]) or pd.isna(sa.iloc[-1]) or pd.isna(sb.iloc[-1]):print("Ichi:NaN close/spans.");return 0
-    ccl=df_close.iloc[-1];cssa=sa.iloc[-1];cssb=sb.iloc[-1];ctn=max(cssa,cssb);cbn=min(cssa,cssb);sig=0
-    if ccl>ctn:sig=1;elif ccl<cbn:sig=-1;return sig
+    min_len_req = max(tenkan_p, kijun_p, senkou_b_p)
+    if len(df_high) < min_len_req or len(df_low) < min_len_req or len(df_close) < min_len_req:
+        print(f"Ichimoku: Données insuffisantes ({len(df_close)} barres) vs requis {min_len_req}.")
+        return 0 
+    tenkan_sen = (df_high.rolling(window=tenkan_p).max() + df_low.rolling(window=tenkan_p).min()) / 2
+    kijun_sen = (df_high.rolling(window=kijun_p).max() + df_low.rolling(window=kijun_p).min()) / 2
+    senkou_span_a = (tenkan_sen + kijun_sen) / 2
+    senkou_span_b = (df_high.rolling(window=senkou_b_p).max() + df_low.rolling(window=senkou_b_p).min()) / 2
+    if pd.isna(df_close.iloc[-1]) or pd.isna(senkou_span_a.iloc[-1]) or pd.isna(senkou_span_b.iloc[-1]):
+        print("Ichimoku: NaN détecté dans close ou spans pour la dernière bougie.")
+        return 0 
+    current_close = df_close.iloc[-1]
+    current_ssa = senkou_span_a.iloc[-1]
+    current_ssb = senkou_span_b.iloc[-1]
+    cloud_top_now = max(current_ssa, current_ssb)
+    cloud_bottom_now = min(current_ssa, current_ssb)
+    sig = 0 
+    if current_close > cloud_top_now:
+        sig = 1
+    elif current_close < cloud_bottom_now:
+        sig = -1
+    return sig
 
 @st.cache_data(ttl=3600)
 def get_data_av(from_currency: str, to_currency: str, av_interval: str = '60min', output_size_av: str = 'compact'):
@@ -82,7 +99,7 @@ def get_data_av(from_currency: str, to_currency: str, av_interval: str = '60min'
         data_df.rename(columns={'1. open':'Open','2. high':'High','3. low':'Low','4. close':'Close'}, inplace=True)
         if data_df.index.tz is not None: data_df.index = data_df.index.tz_convert('UTC'); print(f"Index {pair_str} converti UTC.")
         else: data_df.index = data_df.index.tz_localize('UTC'); print(f"Index {pair_str} localisé UTC (supposition).")
-        data_df = data_df.iloc[::-1] # Inverser
+        data_df = data_df.iloc[::-1] 
         if data_df.empty or len(data_df) < 55: st.warning(f"Données AV<55 {pair_str} ({len(data_df)})."); print(f"Données AV<55 {pair_str} ({len(data_df)})."); return None
         cols_num = ['Open','High','Low','Close']; 
         for col in cols_num:
