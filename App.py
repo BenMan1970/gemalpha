@@ -35,6 +35,16 @@ FOREX_PAIRS_AV = [
     ('GBP', 'JPY'), ('EUR', 'GBP')
 ]
 
+# --- Mapping pour les Timeframes Alpha Vantage ---
+# Utilisé pour convertir une chaîne (hashable) en objet TimeFrame (potentiellement non hashable comme arg direct de @st.cache_data)
+TIMEFRAME_MAP_ALPACA = { # Renommé pour clarté, même si utilisé pour AV ici
+    "1Min": "1min", "5Min": "5min", "15Min": "15min", 
+    "30Min": "30min", "60min": "60min" 
+    # Alpha Vantage utilise des strings pour les intervalles intraday
+    # Si vous utilisez fx.get_currency_exchange_daily, etc., pas besoin d'intervalle
+}
+
+
 def ema(s, p): return s.ewm(span=p, adjust=False).mean()
 def rma(s, p): return s.ewm(alpha=1/p, adjust=False).mean()
 def hull_ma_pine(dc, p=20):
@@ -73,13 +83,14 @@ def ichimoku_pine_signal(df_high, df_low, df_close, tenkan_p=9, kijun_p=26, senk
     return sig
 
 @st.cache_data(ttl=3600)
-def get_data_av(from_currency: str, to_currency: str, av_interval: str = '60min', output_size_av: str = 'compact'):
+def get_data_av(from_currency: str, to_currency: str, av_interval_str: str = '60min', output_size_av: str = 'compact'):
     global fx 
     if fx is None: st.error("FATAL: Client Alpha Vantage non initialisé."); print("FATAL: Client AV non initialisé."); return None
     pair_str = f"{from_currency}/{to_currency}"
-    print(f"\n--- Début get_data_av: from={from_currency}, to={to_currency}, interval={av_interval}, size={output_size_av} ---")
+    print(f"\n--- Début get_data_av: from={from_currency}, to={to_currency}, interval={av_interval_str}, size={output_size_av} ---")
     try:
-        data_df, meta_data = fx.get_currency_exchange_intraday(from_symbol=from_currency, to_symbol=to_currency, interval=av_interval, outputsize=output_size_av)
+        # Alpha Vantage utilise directement la chaîne pour l'intervalle intraday
+        data_df, meta_data = fx.get_currency_exchange_intraday(from_symbol=from_currency, to_symbol=to_currency, interval=av_interval_str, outputsize=output_size_av)
         print(f"Données brutes AV reçues pour {pair_str}. Meta: {meta_data}")
         data_df.rename(columns={'1. open':'Open','2. high':'High','3. low':'Low','4. close':'Close'}, inplace=True)
         if data_df.index.tz is not None: data_df.index = data_df.index.tz_convert('UTC'); print(f"Index {pair_str} converti UTC.")
@@ -98,52 +109,69 @@ def get_data_av(from_currency: str, to_currency: str, av_interval: str = '60min'
         return None
     except Exception as e: st.error(f"Erreur inattendue get_data_av {pair_str}: {type(e).__name__}"); st.exception(e); print(f"ERREUR INATTENDUE get_data_av {pair_str}:\n{traceback.format_exc()}"); return None
 
+# --- Fonction calculate_all_signals_pine (CORRIGÉE pour indentation et syntaxe) ---
 def calculate_all_signals_pine(data):
-    if data is None or len(data)<60:print(f"calc_sig:Data None/courtes({len(data) if data is not None else 'None'}).");return None
-    req_c=['Open','High','Low','Close'];
-    if not all(c in data.columns for c in req_c):print("calc_sig:Cols OHLC manquantes.");return None
-    cl=data['Close'];hi=data['High'];lo=data['Low'];op=data['Open'];o4=(op+hi+lo+cl)/4
-    bull_confluences,bear_confluences,signal_details_pine=0,0,{}
-    try:hmas=hull_ma_pine(cl,20);
-        if len(hmas)>=2 and not hmas.iloc[-2:].isna().any():h_v,h_p=hmas.iloc[-1],hmas.iloc[-2];
-            if h_v>h_p:bull_confluences+=1;signal_details_pine['HMA']="▲"
-            elif h_v<h_p:bear_confluences+=1;signal_details_pine['HMA']="▼"
-            else:signal_details_pine['HMA']="─"
-        else:signal_details_pine['HMA']="N/A"
-    except Exception as e:signal_details_pine['HMA']=f"ErrHMA";print(f"Err HMA:{e}")
-    try:rsis=rsi_pine(o4,10);
-        if len(rsis)>=1 and not pd.isna(rsis.iloc[-1]):r_v=rsis.iloc[-1];signal_details_pine['RSI_val']=f"{r_v:.0f}";
-            if r_v>50:bull_confluences+=1;signal_details_pine['RSI']=f"▲({r_v:.0f})"
-            elif r_v<50:bear_confluences+=1;signal_details_pine['RSI']=f"▼({r_v:.0f})"
-            else:signal_details_pine['RSI']=f"─({r_v:.0f})"
-        else:signal_details_pine['RSI']="N/A"
-    except Exception as e:signal_details_pine['RSI']=f"ErrRSI";signal_details_pine['RSI_val']="N/A";print(f"Err RSI:{e}")
-    try:adxs=adx_pine(hi,lo,cl,14);
-        if len(adxs)>=1 and not pd.isna(adxs.iloc[-1]):a_v=adxs.iloc[-1];signal_details_pine['ADX_val']=f"{a_v:.0f}";
-            if a_v>=20:bull_confluences+=1;bear_confluences+=1;signal_details_pine['ADX']=f"✔({a_v:.0f})"
-            else:signal_details_pine['ADX']=f"✖({a_v:.0f})"
-        else:signal_details_pine['ADX']="N/A"
-    except Exception as e:signal_details_pine['ADX']=f"ErrADX";signal_details_pine['ADX_val']="N/A";print(f"Err ADX:{e}")
-    try:hao,hac=heiken_ashi_pine(data);
-        if len(hao)>=1 and len(hac)>=1 and not pd.isna(hao.iloc[-1]) and not pd.isna(hac.iloc[-1]):
-            if hac.iloc[-1]>hao.iloc[-1]:bull_confluences+=1;signal_details_pine['HA']="▲"
-            elif hac.iloc[-1]<hao.iloc[-1]:bear_confluences+=1;signal_details_pine['HA']="▼"
-            else:signal_details_pine['HA']="─"
-        else:signal_details_pine['HA']="N/A"
-    except Exception as e:signal_details_pine['HA']=f"ErrHA";print(f"Err HA:{e}")
-    try:shao,shac=smoothed_heiken_ashi_pine(data,10,10);
-        if len(shao)>=1 and len(shac)>=1 and not pd.isna(shao.iloc[-1]) and not pd.isna(shac.iloc[-1]):
-            if shac.iloc[-1]>shao.iloc[-1]:bull_confluences+=1;signal_details_pine['SHA']="▲"
-            elif shac.iloc[-1]<shao.iloc[-1]:bear_confluences+=1;signal_details_pine['SHA']="▼"
-            else:signal_details_pine['SHA']="─"
-        else:signal_details_pine['SHA']="N/A"
-    except Exception as e:signal_details_pine['SHA']=f"ErrSHA";print(f"Err SHA:{e}")
-    try:ichis=ichimoku_pine_signal(hi,lo,cl);
-        if ichis==1:bull_confluences+=1;signal_details_pine['Ichi']="▲"
-        elif ichis==-1:bear_confluences+=1;signal_details_pine['Ichi']="▼"
-        elif ichis==0 and(len(data)<max(9,26,52)or(len(data)>0 and pd.isna(data['Close'].iloc[-1]))):signal_details_pine['Ichi']="N/D"
-        else:signal_details_pine['Ichi']="─"
-    except Exception as e:signal_details_pine['Ichi']=f"ErrIchi";print(f"Err Ichi:{e}")
+    if data is None or len(data) < 60:
+        print(f"calculate_all_signals: Données non fournies ou trop courtes ({len(data) if data is not None else 'None'} lignes).")
+        return None
+    required_cols = ['Open', 'High', 'Low', 'Close']
+    if not all(col in data.columns for col in required_cols):
+        print(f"calculate_all_signals: Colonnes OHLC manquantes.")
+        return None
+    
+    close = data['Close']; high = data['High']; low = data['Low']; open_price = data['Open']
+    ohlc4 = (open_price + high + low + close) / 4
+    bull_confluences, bear_confluences, signal_details_pine = 0, 0, {}
+
+    try: # 1. HMA
+        hma_series = hull_ma_pine(close, 20)
+        if len(hma_series) >= 2 and not hma_series.iloc[-2:].isna().any():
+            hma_val = hma_series.iloc[-1]; hma_prev = hma_series.iloc[-2]
+            if hma_val > hma_prev: bull_confluences += 1; signal_details_pine['HMA'] = "▲"
+            elif hma_val < hma_prev: bear_confluences += 1; signal_details_pine['HMA'] = "▼"
+            else: signal_details_pine['HMA'] = "─"
+        else: signal_details_pine['HMA'] = "N/A"
+    except Exception as e: signal_details_pine['HMA'] = "ErrHMA"; print(f"Erreur HMA: {e}")
+    try: # 2. RSI
+        rsi_series = rsi_pine(ohlc4, 10)
+        if len(rsi_series) >=1 and not pd.isna(rsi_series.iloc[-1]):
+            rsi_val = rsi_series.iloc[-1]; signal_details_pine['RSI_val'] = f"{rsi_val:.0f}"
+            if rsi_val > 50: bull_confluences += 1; signal_details_pine['RSI'] = f"▲({rsi_val:.0f})"
+            elif rsi_val < 50: bear_confluences += 1; signal_details_pine['RSI'] = f"▼({rsi_val:.0f})"
+            else: signal_details_pine['RSI'] = f"─({rsi_val:.0f})"
+        else: signal_details_pine['RSI'] = "N/A"
+    except Exception as e: signal_details_pine['RSI'] = "ErrRSI"; signal_details_pine['RSI_val'] = "N/A"; print(f"Erreur RSI: {e}")
+    try: # 3. ADX
+        adx_series = adx_pine(high, low, close, 14)
+        if len(adx_series) >= 1 and not pd.isna(adx_series.iloc[-1]):
+            adx_val = adx_series.iloc[-1]; signal_details_pine['ADX_val'] = f"{adx_val:.0f}"
+            if adx_val >= 20: bull_confluences += 1; bear_confluences += 1; signal_details_pine['ADX'] = f"✔({adx_val:.0f})"
+            else: signal_details_pine['ADX'] = f"✖({adx_val:.0f})"
+        else: signal_details_pine['ADX'] = "N/A"
+    except Exception as e: signal_details_pine['ADX'] = "ErrADX"; signal_details_pine['ADX_val'] = "N/A"; print(f"Erreur ADX: {e}")
+    try: # 4. Heiken Ashi
+        ha_open, ha_close = heiken_ashi_pine(data)
+        if len(ha_open) >=1 and len(ha_close) >=1 and not pd.isna(ha_open.iloc[-1]) and not pd.isna(ha_close.iloc[-1]):
+            if ha_close.iloc[-1] > ha_open.iloc[-1]: bull_confluences += 1; signal_details_pine['HA'] = "▲"
+            elif ha_close.iloc[-1] < ha_open.iloc[-1]: bear_confluences += 1; signal_details_pine['HA'] = "▼"
+            else: signal_details_pine['HA'] = "─"
+        else: signal_details_pine['HA'] = "N/A"
+    except Exception as e: signal_details_pine['HA'] = "ErrHA"; print(f"Erreur HA: {e}")
+    try: # 5. Smoothed Heiken Ashi
+        sha_open, sha_close = smoothed_heiken_ashi_pine(data, 10, 10)
+        if len(sha_open) >=1 and len(sha_close) >=1 and not pd.isna(sha_open.iloc[-1]) and not pd.isna(sha_close.iloc[-1]):
+            if sha_close.iloc[-1] > sha_open.iloc[-1]: bull_confluences += 1; signal_details_pine['SHA'] = "▲"
+            elif sha_close.iloc[-1] < sha_open.iloc[-1]: bear_confluences += 1; signal_details_pine['SHA'] = "▼"
+            else: signal_details_pine['SHA'] = "─"
+        else: signal_details_pine['SHA'] = "N/A"
+    except Exception as e: signal_details_pine['SHA'] = "ErrSHA"; print(f"Erreur SHA: {e}")
+    try: # 6. Ichimoku
+        ichimoku_signal_val = ichimoku_pine_signal(high, low, close)
+        if ichimoku_signal_val == 1: bull_confluences += 1; signal_details_pine['Ichi'] = "▲"
+        elif ichimoku_signal_val == -1: bear_confluences += 1; signal_details_pine['Ichi'] = "▼"
+        elif ichimoku_signal_val == 0 and (len(data) < max(9,26,52) or (len(data) > 0 and pd.isna(data['Close'].iloc[-1]))): signal_details_pine['Ichi'] = "N/D"
+        else: signal_details_pine['Ichi'] = "─"
+    except Exception as e: signal_details_pine['Ichi'] = "ErrIchi"; print(f"Erreur Ichi: {e}")
     confluence_value=max(bull_confluences,bear_confluences)
     direction="NEUTRE"
     if bull_confluences > bear_confluences: direction="HAUSSIER"
@@ -172,7 +200,7 @@ with col2:
         st.info(f"🔄 Scan en cours (Alpha Vantage H1)...");pr_res=[];pb=st.progress(0);stx=st.empty()
         for i,(from_s,to_s) in enumerate(FOREX_PAIRS_AV):
             pnd=f"{from_s}{to_s}";cp=(i+1)/len(FOREX_PAIRS_AV);pb.progress(cp);stx.text(f"Analyse (AV H1):{pnd}({i+1}/{len(FOREX_PAIRS_AV)})")
-            d_h1_av=get_data_av(from_s,to_s,av_interval="60min",output_size_av='compact')
+            d_h1_av=get_data_av(from_s,to_s,av_interval_str="60min",output_size_av='compact') # Utiliser av_interval_str
             if d_h1_av is not None:
                 sigs=calculate_all_signals_pine(d_h1_av)
                 if sigs:strs=get_stars_pine(sigs['confluence_P']);rd={'Paire':pnd,'Direction':sigs['direction_P'],'Conf. (0-6)':sigs['confluence_P'],'Étoiles':strs,'RSI':sigs['rsi_P'],'ADX':sigs['adx_P'],'Bull':sigs['bull_P'],'Bear':sigs['bear_P'],'details':sigs['signals_P']};pr_res.append(rd)
