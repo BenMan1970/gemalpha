@@ -62,8 +62,7 @@ def smoothed_heiken_ashi_pine(dfo,l1=10,l2=10):
     hai=pd.DataFrame({'Open':eo,'High':eh,'Low':el,'Close':ec},index=dfo.index)
     hao_i,hac_i=heiken_ashi_pine(hai);sho=ema(hao_i,l2);shc=ema(hac_i,l2);return sho,shc
 
-# --- Fonction ichimoku_pine_signal (CORRIGÉE pour la syntaxe if/elif) ---
-def ichimoku_pine_signal(df_high, df_low, df_close, tenkan_p=9, kijun_p=26, senkou_b_p=52):
+def ichimoku_pine_signal(df_high, df_low, df_close, tenkan_p=9, kijun_p=26, senkou_b_p=52): # CORRIGÉE
     min_len_req = max(tenkan_p, kijun_p, senkou_b_p)
     if len(df_high) < min_len_req or len(df_low) < min_len_req or len(df_close) < min_len_req:
         print(f"Ichimoku: Données insuffisantes ({len(df_close)} barres) vs requis {min_len_req}.")
@@ -113,40 +112,67 @@ def get_data_av(from_currency: str, to_currency: str, av_interval: str = '60min'
         return None
     except Exception as e: st.error(f"Erreur inattendue get_data_av {pair_str}: {type(e).__name__}"); st.exception(e); print(f"ERREUR INATTENDUE get_data_av {pair_str}:\n{traceback.format_exc()}"); return None
 
+# --- Fonction calculate_all_signals_pine (CORRIGÉE pour la syntaxe des blocs) ---
 def calculate_all_signals_pine(data):
-    if data is None or len(data)<60:print(f"calc_sig:Data None/courtes({len(data) if data is not None else 'None'}).");return None
-    req_c=['Open','High','Low','Close'];
-    if not all(c in data.columns for c in req_c):print("calc_sig:Cols OHLC manquantes.");return None
-    cl=data['Close'];hi=data['High'];lo=data['Low'];op=data['Open'];o4=(op+hi+lo+cl)/4;bc,brc,sd=0,0,{}
-    try:hmas=hull_ma_pine(cl,20);
-        if len(hmas)>=2 and not hmas.iloc[-2:].isna().any():h_v,h_p=hmas.iloc[-1],hmas.iloc[-2];
-            if h_v>h_p:bc+=1;sd['HMA']="▲";elif h_v<h_p:brc+=1;sd['HMA']="▼";else:sd['HMA']="─"
-        else:sd['HMA']="N/A"
-    except Exception as e:sd['HMA']=f"ErrHMA";print(f"Err HMA:{e}")
-    try:rsis=rsi_pine(o4,10);
-        if len(rsis)>=1 and not pd.isna(rsis.iloc[-1]):r_v=rsis.iloc[-1];sd['RSI_val']=f"{r_v:.0f}";
-            if r_v>50:bc+=1;sd['RSI']=f"▲({r_v:.0f})";elif r_v<50:brc+=1;sd['RSI']=f"▼({r_v:.0f})";else:sd['RSI']=f"─({r_v:.0f})"
-        else:sd['RSI']="N/A"
-    except Exception as e:sd['RSI']=f"ErrRSI";sd['RSI_val']="N/A";print(f"Err RSI:{e}")
-    try:adxs=adx_pine(hi,lo,cl,14);
-        if len(adxs)>=1 and not pd.isna(adxs.iloc[-1]):a_v=adxs.iloc[-1];sd['ADX_val']=f"{a_v:.0f}";
-            if a_v>=20:bc+=1;brc+=1;sd['ADX']=f"✔({a_v:.0f})";else:sd['ADX']=f"✖({a_v:.0f})"
-        else:sd['ADX']="N/A"
-    except Exception as e:sd['ADX']=f"ErrADX";sd['ADX_val']="N/A";print(f"Err ADX:{e}")
-    try:hao,hac=heiken_ashi_pine(data);
+    if data is None or len(data) < 60:
+        print(f"calc_sig:Data None/courtes({len(data) if data is not None else 'None'}).")
+        return None
+    req_c=['Open','High','Low','Close']
+    if not all(c in data.columns for c in req_c):
+        print("calc_sig:Cols OHLC manquantes.")
+        return None
+    cl=data['Close']; hi=data['High']; lo=data['Low']; op=data['Open']
+    o4=(op+hi+lo+cl)/4
+    bc,brc,sd = 0,0,{}
+    try: # HMA
+        hmas=hull_ma_pine(cl,20)
+        if len(hmas)>=2 and not hmas.iloc[-2:].isna().any():
+            h_v=hmas.iloc[-1]; h_p=hmas.iloc[-2]
+            if h_v>h_p: bc+=1; sd['HMA']="▲"
+            elif h_v<h_p: brc+=1; sd['HMA']="▼"
+            else: sd['HMA']="─"
+        else: sd['HMA']="N/A"
+    except Exception as e: sd['HMA']=f"ErrHMA"; print(f"Err HMA:{e}")
+    try: # RSI
+        rsis=rsi_pine(o4,10)
+        if len(rsis)>=1 and not pd.isna(rsis.iloc[-1]):
+            r_v=rsis.iloc[-1]; sd['RSI_val']=f"{r_v:.0f}"
+            if r_v>50: bc+=1; sd['RSI']=f"▲({r_v:.0f})"
+            elif r_v<50: brc+=1; sd['RSI']=f"▼({r_v:.0f})"
+            else: sd['RSI']=f"─({r_v:.0f})"
+        else: sd['RSI']="N/A"
+    except Exception as e: sd['RSI']=f"ErrRSI"; sd['RSI_val']="N/A"; print(f"Err RSI:{e}")
+    try: # ADX
+        adxs=adx_pine(hi,lo,cl,14)
+        if len(adxs)>=1 and not pd.isna(adxs.iloc[-1]):
+            a_v=adxs.iloc[-1]; sd['ADX_val']=f"{a_v:.0f}"
+            if a_v>=20: bc+=1; brc+=1; sd['ADX']=f"✔({a_v:.0f})"
+            else: sd['ADX']=f"✖({a_v:.0f})"
+        else: sd['ADX']="N/A"
+    except Exception as e: sd['ADX']=f"ErrADX"; sd['ADX_val']="N/A"; print(f"Err ADX:{e}")
+    try: # HA
+        hao,hac=heiken_ashi_pine(data)
         if len(hao)>=1 and len(hac)>=1 and not pd.isna(hao.iloc[-1]) and not pd.isna(hac.iloc[-1]):
-            if hac.iloc[-1]>hao.iloc[-1]:bc+=1;sd['HA']="▲";elif hac.iloc[-1]<hao.iloc[-1]:brc+=1;sd['HA']="▼";else:sd['HA']="─"
-        else:sd['HA']="N/A"
-    except Exception as e:sd['HA']=f"ErrHA";print(f"Err HA:{e}")
-    try:shao,shac=smoothed_heiken_ashi_pine(data,10,10);
+            if hac.iloc[-1]>hao.iloc[-1]: bc+=1; sd['HA']="▲"
+            elif hac.iloc[-1]<hao.iloc[-1]: brc+=1; sd['HA']="▼"
+            else: sd['HA']="─"
+        else: sd['HA']="N/A"
+    except Exception as e: sd['HA']=f"ErrHA"; print(f"Err HA:{e}")
+    try: # SHA
+        shao,shac=smoothed_heiken_ashi_pine(data,10,10)
         if len(shao)>=1 and len(shac)>=1 and not pd.isna(shao.iloc[-1]) and not pd.isna(shac.iloc[-1]):
-            if shac.iloc[-1]>shao.iloc[-1]:bc+=1;sd['SHA']="▲";elif shac.iloc[-1]<shao.iloc[-1]:brc+=1;sd['SHA']="▼";else:sd['SHA']="─"
-        else:sd['SHA']="N/A"
-    except Exception as e:sd['SHA']=f"ErrSHA";print(f"Err SHA:{e}")
-    try:ichis=ichimoku_pine_signal(hi,lo,cl);
-        if ichis==1:bc+=1;sd['Ichi']="▲";elif ichis==-1:brc+=1;sd['Ichi']="▼";
-        elif ichis==0 and(len(data)<max(9,26,52)or(len(data)>0 and pd.isna(data['Close'].iloc[-1]))):sd['Ichi']="N/D";else:sd['Ichi']="─"
-    except Exception as e:sd['Ichi']=f"ErrIchi";print(f"Err Ichi:{e}")
+            if shac.iloc[-1]>shao.iloc[-1]: bc+=1; sd['SHA']="▲"
+            elif shac.iloc[-1]<shao.iloc[-1]: brc+=1; sd['SHA']="▼"
+            else: sd['SHA']="─"
+        else: sd['SHA']="N/A"
+    except Exception as e: sd['SHA']=f"ErrSHA"; print(f"Err SHA:{e}")
+    try: # Ichi
+        ichis=ichimoku_pine_signal(hi,lo,cl)
+        if ichis==1: bc+=1; sd['Ichi']="▲"
+        elif ichis==-1: brc+=1; sd['Ichi']="▼"
+        elif ichis==0 and(len(data)<max(9,26,52)or(len(data)>0 and pd.isna(data['Close'].iloc[-1]))): sd['Ichi']="N/D"
+        else: sd['Ichi']="─"
+    except Exception as e: sd['Ichi']=f"ErrIchi"; print(f"Err Ichi:{e}")
     cfv=max(bc,brc);di="NEUTRE";
     if bc>brc:di="HAUSSIER";elif brc>bc:di="BAISSIER";elif bc==brc and bc>0:di="CONFLIT"
     return{'confluence_P':cfv,'direction_P':di,'bull_P':bc,'bear_P':brc,'rsi_P':sd.get('RSI_val',"N/A"),'adx_P':sd.get('ADX_val',"N/A"),'signals_P':sd}
